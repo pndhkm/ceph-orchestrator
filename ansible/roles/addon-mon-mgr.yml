@@ -1,0 +1,42 @@
+
+- name: Copy /etc/ceph/ from node1 to local
+  hosts: node1
+  gather_facts: true
+  vars:
+    ceph_nodes:
+      - name: node2
+        ip: 192.168.1.5
+      - name: node3
+        ip: 192.168.1.6
+  tasks:
+    - name: Add host to Ceph cluster
+      shell: ceph orch host add {{ item.name }} {{ item.ip }}
+      with_items: "{{ ceph_nodes }}"
+
+    - name: Add monitor daemon to host
+      shell: ceph orch daemon add mon {{ item.name }}:{{ item.ip }}
+      with_items: "{{ ceph_nodes }}"
+
+    - name: Add manager daemon to host
+      shell: ceph orch daemon add mgr {{ item.name }}:{{ item.ip }}
+
+- name: Copy /etc/ceph/ from node1 to local
+  hosts: node1
+  gather_facts: false
+  tasks:
+    - name: Copy /etc/ceph/ from node1 to local
+      synchronize:
+        mode: pull
+        src: /etc/ceph/
+        dest: ../conf/ceph
+
+- name: Transfer /etc/ceph/ from local to antoher_node
+  hosts: hosts
+  gather_facts: false
+  tasks:
+    - name: Transfer /etc/ceph/ from local to antoher_node
+      become: false
+      synchronize:
+        src: ../conf/ceph
+        dest: /etc
+      with_items: "{{ ceph_nodes }}"

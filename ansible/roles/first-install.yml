@@ -1,0 +1,121 @@
+- name: cephadm
+  hosts: "{{ HOSTS }}"
+  become: true
+  tasks:
+
+    - name: Remove Docker and Podman packages
+      apt:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - docker.io
+        - docker-doc
+        - docker-compose
+        - podman-docker
+        - containerd
+        - podman
+        - runc
+        
+    - name: Update package lists
+      apt:
+        update_cache: yes
+      register: update_result
+
+    - name: Check for updates
+      debug:
+        var: update_result
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+      when: update_result.changed  
+
+    - name: Add users
+      ansible.builtin.user:
+        name: paha
+        comment: paha
+        group: sudo
+        shell: /bin/bash
+        generate_ssh_key: yes
+        home: /home/paha
+        password: "{{ 'password' | password_hash('sha512', 'mysecretsalt') }}"
+        expires: -1
+
+    - name: paha join to sudo group
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        state: present
+        regexp: '^%root ALL='
+        line: 'paha ALL=(ALL) NOPASSWD:ALL'
+
+    - name: Installing ceph
+      shell: "{{ item }}"
+      become_user: paha
+      become: yes
+      with_items:
+          - 'sudo wget https://github.com/ceph/ceph/raw/pacific/src/cephadm/cephadm -P /usr/bin' 
+          - 'sudo chmod +x /usr/bin/cephadm'
+          - 'sudo mkdir -p /etc/ceph'
+          - 'sudo cephadm add-repo --release quincy'
+          - 'sudo cephadm install ceph-common'
+          - 'sudo cephadm install cephadm'
+
+    - name: Install Dependencies
+      apt:
+        name:
+            - chrony
+            - ca-certificates
+            - curl
+            - gnupg
+            - lvm2
+            - rsync
+            - sshpass
+
+    - name: Add signing key
+      ansible.builtin.apt_key:
+        url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+        state: present
+
+    - name: Add docker repo
+      ansible.builtin.apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/debian bullseye stable
+        state: present
+        filename: docker
+
+    - name: Installing Docker
+      apt:
+          name:
+            - docker-ce
+            - docker-ce-cli
+            - containerd.io
+            - docker-buildx-plugin
+            - docker-compose-plugin
+          state: latest
+
+    - name: configure chrony
+      lineinfile:
+        path: /etc/chrony/chrony.conf
+        regexp: "^pool"
+        line: "pool 3.id.pool.ntp.org iburst"
+      notify: restart chrony
+
+    - name: set timezone
+      command:
+        cmd: timedatectl set-timezone Asia/Jakarta
+      become: true
+
+    - name: enable docker
+      systemd:
+        name: docker
+        enabled: true
+        state: restarted
+      become: true
+
+  handlers:
+    - name: restart chrony
+      systemd:
+        name: chrony
+        state: restarted
+      become: true
